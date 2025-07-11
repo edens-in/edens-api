@@ -1,123 +1,144 @@
-// File: controllers/productController.js
-const multer = require('multer');
-const upload = multer();
-const productModel = require('../services/productService');
-const { uploadProductImage } = require('../services/s3/productImageService');
-const { generatePresignedUrl } = require('../services/s3/productImageService');
-
-const { ddbDocClient } = require('../config/dynamoDB');
-const { QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
-
-
-
-
-
 const productService = require('../services/productService');
-
-
+const { generatePresignedUrl } = require('../services/s3/productImageService');
+const userLikeService = require('../services/userLikeService');
 
 const createProduct = async (req, res) => {
   try {
-    const sellerId = req.seller.sellerId;
-    const productData = req.body;
-    const productImages = req.files;
-    const imageUrls = await Promise.all(productImages.map(async (image) => {
-      const fileType = image.originalname.split('.').pop();
-      return await uploadProductImage(image.buffer, fileType);
-    }));
-
-    const product = await productModel.createProduct(sellerId, productData, imageUrls);
-    res.status(201).json(product);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error creating product' });
+    const data = req.body;
+    const imageUrls = req.files.map(file => file.key);
+    const result = await productService.createProduct(data, imageUrls);
+    res.status(201).json(result);
+  } catch (err) {
+    console.error("Create product error:", err);
+    res.status(500).json({ error: 'Failed to create product' });
   }
 };
 
-
-
-
-const getProducts = async (req, res) => {
+const getProductById = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { productName } = req.query;
-    console.log(req.user);
-    
-    if (userId==null || userId == undefined) {
-      return res.status(500).json({ message: 'Illeh !!' });  
-    }
+    const product = await productService.getProductById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Not found' });
 
-    // Step 1: Fetch all products
-    const productsResult = await ddbDocClient.send(new ScanCommand({
-      TableName: 'products',
-    }));
-    let products = productsResult.Items;
-    
-    console.log(products.length);
-
-
-    // Step 2: Optional in-memory filter by productName
-    if (productName) {
-      const lowerSearch = productName.toLowerCase();
-      products = products.filter(p =>
-        p.productName?.toLowerCase().includes(lowerSearch)
+    if (Array.isArray(product.imageUrls)) {
+      const signedUrls = await Promise.all(
+        product.imageUrls.map(key => generatePresignedUrl(key))
       );
-    }
-
-    // Step 3: Fetch user liked product IDs
-    const likedResult = await ddbDocClient.send(new QueryCommand({
-      TableName: 'userLikedProducts',
-      KeyConditionExpression: 'userId = :uid',
-      ExpressionAttributeValues: {
-        ':uid': userId,
-      },
-    }));
-    const likedProductIds = new Set(likedResult.Items.map(item => item.productId));
-
-    // Step 4: Add liked flag and signed image URLs
-    const finalProducts = await Promise.all(products
-      .filter(p => Array.isArray(p.imageUrls))
-      .map(async (product) => {
-        const signedImageUrls = await Promise.all(
-          product.imageUrls.map(async (key) => await generatePresignedUrl(key))
-        );
-
-        return {
-          ...product,
-          imageUrls: signedImageUrls,
-          likedByUser: likedProductIds.has(product.productId),
-        };
-      }));
-
-    res.status(200).json(finalProducts);
-  } catch (error) {
-    console.error('Error fetching products:', error);
-    res.status(500).json({ message: 'Error fetching products' });
-  }
-};
-
-
-
-
-
-
-const getProductDetails = async (req, res) => {
-  const { productId, productCategory } = req.params;
-
-  // console.log("productId:", productId);
-  // console.log("productCategory:", productCategory);
-
-  try {
-    const product = await productService.getProductById(productId, productCategory);
-
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
+      product.imageUrls = signedUrls;
     }
 
     res.json(product);
-  } catch (error) {
-    console.error('Error fetching product:', error);
-    res.status(500).json({ message: 'Internal server error' });
+  } catch {
+    res.status(500).json({ error: 'Error fetching product' });
+  }
+};
+
+
+const deleteProduct = async (req, res) => {
+  try {
+    await productService.deleteProduct(req.params.id);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Error deleting product' });
+  }
+};
+
+const getAllProducts = async (req, res) => {
+  try {
+    const products = await productService.getAllProducts();
+
+    const updatedProducts = await Promise.all(products.map(async (product) => {
+      if (!Array.isArray(product.imageUrls)) return product;
+
+      const signedUrls = await Promise.all(
+        product.imageUrls.map(key => generatePresignedUrl(key))
+      );
+
+      return {
+        ...product,
+        imageUrls: signedUrls
+      };
+    }));
+
+    res.json(updatedProducts);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch products' });
+  }
+};
+
+
+
+const searchProducts = async (req, res) => {
+  try {
+    const { productName } = req.query;
+    if (!productName) {
+      return res.status(400).json({ error: 'Missing productName in query' });
+    }
+
+    const matchedProducts = await productService.searchProductsByName(productName);
+
+    const updated = await Promise.all(matchedProducts.map(async (product) => {
+      if (!Array.isArray(product.imageUrls)) return product;
+
+      const signedUrls = await Promise.all(
+        product.imageUrls.map(key => generatePresignedUrl(key))
+      );
+
+      return {
+        ...product,
+        imageUrls: signedUrls
+      };
+    }));
+
+    res.json(updated);
+  } catch (err) {
+    console.error("Search product error:", err);
+    res.status(500).json({ error: "Failed to search products" });
+  }
+};
+
+
+
+const likeProduct = async (req, res) => {
+  const userId = req.user?.userId;
+  const { productId } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized. Please log in to like products.' });
+  }
+
+  if (!productId) {
+    return res.status(400).json({ error: 'productId is required' });
+  }
+
+  try {
+    console.log("Trying to like product:", productId, "by user:", userId);
+    await userLikeService.likeProduct(userId, productId);
+    res.status(201).json({ message: 'Product liked', data: { userId, productId } });
+  } catch (err) {
+    console.error('Like product error:', err); // ✅ log exact error
+    res.status(500).json({ error: 'Failed to like product' });
+  }
+};
+
+
+const getLikedProducts = async (req, res) => {
+  const userId = req.user?.userId;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized. Please log in.' });
+  }
+
+  try {
+    const likes = await userLikeService.getLikedProducts(userId);
+
+    return res.status(200).json({
+      message: likes.length === 0 ? 'No liked products found.' : 'Liked products fetched',
+      likedProducts: likes,
+    });
+  } catch (err) {
+    console.error('Get liked products error:', err);
+    res.status(500).json({ error: 'Failed to fetch liked products' });
   }
 };
 
@@ -125,6 +146,10 @@ const getProductDetails = async (req, res) => {
 
 module.exports = {
   createProduct,
-  getProducts,
-  getProductDetails
+  getProductById,
+  deleteProduct,
+  getAllProducts,
+  searchProducts,
+  likeProduct,
+  getLikedProducts
 };

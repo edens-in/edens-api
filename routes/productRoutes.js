@@ -1,18 +1,20 @@
-//File: routes/productRoutes.js
 const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
-const userActionController = require('../controllers/userActionController');
-const { authenticateSeller } = require('../middlewares/authenticateSeller');
+const categoryController = require('../controllers/categoryController');
+const upload = require('../middlewares/uploadS3');
 const { authenticateUser } = require('../middlewares/authenticateUser');
-const multer = require('multer');
-const upload = multer();
 
-router.post('/create-product', authenticateSeller, upload.array('productImages'), productController.createProduct);
-router.get('/search-products', authenticateUser ,productController.getProducts);
-router.post('/like', authenticateUser, userActionController.toggleLike);
+// 📦 Product Routes
+router.post('/', upload.array('images', 5), productController.createProduct);
+router.get('/', productController.getAllProducts);
+router.get('/search-products', productController.searchProducts);
+router.get('/:id', productController.getProductById);
+router.delete('/:id', productController.deleteProduct);
+router.post('/like', authenticateUser, productController.likeProduct); // only logged-in users
 
-router.get('/:productCategory/:productId', productController.getProductDetails);
-
+// 📁 Category Routes
+router.post('/categories', categoryController.createCategory);
+router.get('/categories', categoryController.getAllCategories);
 
 module.exports = router;
