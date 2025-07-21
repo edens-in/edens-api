@@ -1,4 +1,3 @@
-// models/orderModel.js
 const { v4: uuidv4 } = require('uuid');
 
 function generateOrderId() {
@@ -25,6 +24,7 @@ function buildOrderItem({ userId, transactionId, product, quantity, address }) {
         userId,
         sellerId: product.sellerId,
         productId: product.productId,
+        productName: product.name, 
         quantity,
         subTotal,
         gstAmount,
@@ -33,9 +33,21 @@ function buildOrderItem({ userId, transactionId, product, quantity, address }) {
         address,
         status: 'pending',
         paymentStatus: 'unpaid',
+        shippingInfo: {  
+            provider: 'Delhivery',
+            awb: null,
+            trackingUrl: null,
+            status: 'pending',
+            weight: product.weight || 0.5
+        },
         createdAt: currentTime,
-        updatedAt: currentTime
+        updatedAt: currentTime,
+        isActive: true,
+        version: 1
     };
 }
 
-module.exports = { buildOrderItem };
+module.exports = { 
+    buildOrderItem,
+    generateOrderId
+};

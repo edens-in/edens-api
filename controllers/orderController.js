@@ -1,80 +1,112 @@
-// controllers/orderController.js
 const { ddbDocClient } = require('../config/dynamoDB');
 const { PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { getProductById } = require('../services/productService');
 const { buildOrderItem } = require('../models/orderModel');
 const { generateTransactionId, buildPaymentItem } = require('../models/paymentModel');
+const { createDelhiveryShipment } = require('../services/delhiveryService');
 
-const ORDERS_TABLE =  'Orders';
+const ORDERS_TABLE = 'Orders';
 const PAYMENTS_TABLE = 'Payments';
-const crypto = require('crypto');
 
-// Create order and payment records
 const createOrder = async (req, res) => {
-  try {
-    const { userId, address, items } = req.body;
+    try {
+        const { userId, address, items, paymentMethod = 'razorpay' } = req.body;
 
-    if (!userId || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: 'Missing userId or items' });
+        if (!userId || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Missing userId or items' 
+            });
+        }
+
+        const transactionId = generateTransactionId();
+        let totalAmount = 0;
+        const currentTime = new Date().toISOString();
+
+        // Process each product in the order
+        const orderItems = await Promise.all(items.map(async item => {
+            const product = await getProductById(item.productId, item.productCategory);
+            if (!product) {
+                throw new Error(`Product not found: ${item.productId} (${item.productCategory})`);
+            }
+
+            const orderItem = buildOrderItem({
+                userId,
+                transactionId,
+                product,
+                quantity: parseInt(item.quantity),
+                address
+            });
+
+            totalAmount += orderItem.totalAmount;
+
+            await ddbDocClient.send(new PutCommand({
+                TableName: ORDERS_TABLE,
+                Item: orderItem
+            }));
+
+            return orderItem;
+        }));
+
+        // Create payment entry
+        const paymentItem = buildPaymentItem({
+            userId,
+            transactionId,
+            totalAmount,
+            paymentMethod
+        });
+
+        await ddbDocClient.send(new PutCommand({
+            TableName: PAYMENTS_TABLE,
+            Item: paymentItem
+        }));
+
+        // Calculate total weight (simple implementation - sum of all items' weights)
+        const calculateTotalWeight = (items) => {
+            return items.reduce((total, item) => {
+                return total + (item.product?.weight || 0.5) * item.quantity;
+            }, 0);
+        };
+
+        // Prepare shipping details using the first order item
+        const shippingDetails = {
+            orderId: orderItems[0].orderId, // Using the first order's ID
+            address: address,
+            totalAmount: totalAmount,
+            paymentMethod: paymentMethod,
+            weight: calculateTotalWeight(items.map(item => ({
+                product: item.product,
+                quantity: item.quantity
+            })))
+        };
+
+        // Create shipping with Delhivery
+        const shipment = await createDelhiveryShipment(shippingDetails);
+    console.log('Shipping details:', shippingDetails);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Order, payment and shipment created successfully',
+            data: {
+                transactionId,
+                orders: orderItems,
+                payment: paymentItem,
+                shipment: {
+                    awb: shipment.awb ,
+                    trackingUrl: shipment.trackingUrl 
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Order creation failed:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to create order',
+            error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
-
-    const transactionId = generateTransactionId();
-    let totalAmount = 0;
-    const currentTime = new Date().toISOString();
-
-    // Process each product in the order
-    const orderItems = await Promise.all(items.map(async item => {
-      const product = await getProductById(item.productId, item.productCategory);
-      if (!product) throw new Error(`Product not found: ${item.productId} (${item.productCategory})`);
-
-      const orderItem = buildOrderItem({
-        userId,
-        transactionId,
-        product,
-        quantity: parseInt(item.quantity),
-        address
-      });
-
-      totalAmount += orderItem.totalAmount;
-
-      await ddbDocClient.send(new PutCommand({
-        TableName: ORDERS_TABLE,
-        Item: orderItem
-      }));
-
-      return orderItem;
-    }));
-
-    // Create payment entry
-    const paymentItem = buildPaymentItem({
-      userId,
-      transactionId,
-      totalAmount,
-      paymentMethod: 'razorpay'
-    });
-
-    await ddbDocClient.send(new PutCommand({
-      TableName: PAYMENTS_TABLE,
-      Item: paymentItem
-    }));
-
-    return res.status(201).json({
-      success: true,
-      message: 'Order and payment initialized successfully',
-      transactionId,
-      orders: orderItems,
-      payment: paymentItem
-    });
-
-  } catch (error) {
-    console.error('Order creation failed:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create order'
-    });
-  }
 };
-
 
 
 

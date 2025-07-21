@@ -12,6 +12,9 @@ const userActionRoutes = require("./routes/userActionRoutes");
 const orderRoutes = require('./routes/orderRoutes');
 const paymentRoutes = require("./routes/paymentRoutes");
 const webhookRoutes = require('./routes/webhookRoutes');
+const delhiveryRoutes = require('./routes/delhiveryRoutes');
+const estimateRoutes = require('./routes/estimate');
+
 
 // CORS Whitelist
 const allowedOrigins = [
@@ -49,6 +52,9 @@ app.use("/api/user-actions", userActionRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/webhook", webhookRoutes);
+app.use('/api/delhivery', delhiveryRoutes);
+
+app.use('/api/estimate', estimateRoutes);
 
 // Health check
 app.get("/", (req, res) => {
