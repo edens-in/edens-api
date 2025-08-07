@@ -19,6 +19,7 @@ const estimateRoutes = require('./routes/estimate');
 // CORS Whitelist
 const allowedOrigins = [
     "https://www.edens.in",
+    "https://www.jubili.in",
     "https://kickstart-59ea.onrender.com",
     "https://edens-admin-ui.onrender.com",
     "http://localhost:3000",
